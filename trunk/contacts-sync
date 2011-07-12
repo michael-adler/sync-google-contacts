@@ -44,6 +44,7 @@ MAX_RESULTS = 10000
 SYNC_ID_TAG = 'csync-uid'
 
 enableUpdates = True
+debug = False
 
 
 ################################################################################
@@ -518,9 +519,12 @@ def MergeContacts(users, contacts, pvtGroups):
             if not key in prev_state[i]:
                 print "Contact: \"%s\" (%s) is new" % (name, users[i])
                 modified = True
-            elif entry.updated.text != prev_state[i][key]:
+            elif entry.updated.text != prev_state[i][key]['updated']:
                 print "Contact: \"%s\" (%s) is modified" % (name, users[i])
                 modified = True
+                if debug:
+                    print '  Old: date %s, etag %s' % (prev_state[i][key]['updated'], prev_state[i][key]['etag'])
+                    print '  New: date %s, etag %s' % (entry.updated.text, entry.etag)
             else:
                 modified = False
 
@@ -542,11 +546,11 @@ def MergeContacts(users, contacts, pvtGroups):
                         elif modified:
                             print "Contact: update \"%s\" (%s)" % (name, users[j])
                             new_entry = UpdateContactInUser(contacts[j], entry)
-                            prev_state[j][key] = new_entry.updated.text
+                            prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
                     elif not is_private and (modified or not key in prev_state[j]):
                         print "Contact: add \"%s\" (%s)" % (name, users[j])
                         new_entry = AddContactToUser(contacts[j], entry)
-                        prev_state[j][key] = new_entry.updated.text
+                        prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
 
     ##
     ## Look for contacts deleted by any user and delete them in all users
@@ -567,13 +571,7 @@ def MergeContacts(users, contacts, pvtGroups):
     for i in range(len(users)):
         state = dict()
         for key, entry in contacts[i].ContactIterItems():
-            state[key] = entry.updated.text
-            if entry.name.full_name.text == 'Eytan Adler XXXX':
-                ph = entry.phone_number[0]
-                ph.text = '16175843193'
-                entry.phone_number = [ph]
-                print entry.DebugDump()
-                state[key] = contacts[i].ContactUpdate(entry)
+            state[key] = {'updated': entry.updated.text, 'etag': entry.etag}
 
         if enableUpdates:
             SaveContactState(users[i], state)
@@ -663,10 +661,19 @@ def SaveContactState(user, state):
 ################################################################################
 
 def usage(status):
-    print 'Usage: contacts-sync --user=<username0> --user=<username1>'
-    print '                     --private=<private group> --dry-run'
+    print 'Usage: contacts-sync --user=<username> [... --user=<usernameN>]'
+    print '                     [--private=<group> .. --private=<groupN>]'
+    print '                     [--dry-run] [--debug]'
     print ''
-    print '    The --private argument may be specified multiple times.'
+    print '    --user specifies the name of an account section in the'
+    print '      ~/.google/config file.'
+    print ''
+    print '    --private marks a group that should not be synchronized across'
+    print '      accounts.  Marking an existing shared contact private in one'
+    print '      account will cause it to be removed from all other accounts.'
+    print ''
+    print '    --dry-run prevents writes to the Google servers.'
+    print ''
     sys.exit(status)
 
 
@@ -674,12 +681,13 @@ def main():
     """Demonstrates use of the Contacts extension using the ContactsSample object."""
 
     global enableUpdates
+    global debug
     users = []
     pvt_grp_names = sets.Set()
 
     # Parse command line options
     try:
-        opts, args = getopt.getopt(sys.argv[1:], '', ['user=', 'private=', 'dry-run', 'help'])
+        opts, args = getopt.getopt(sys.argv[1:], '', ['user=', 'private=', 'dry-run', 'debug', 'help'])
     except getopt.error, msg:
         usage(2)
 
@@ -691,10 +699,12 @@ def main():
             pvt_grp_names.add(arg)
         elif option == '--dry-run':
             enableUpdates = False
+        elif option == '--debug':
+            debug = True
         elif option == '--help':
             usage(0)
 
-    if len(users) != 2:
+    if len(users) == 0:
         usage(2)
 
     ##
