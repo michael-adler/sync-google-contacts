@@ -107,19 +107,36 @@ class UserContacts(object):
             for entry in feed.entry:
                 # Ignore contacts without names or not belonging to any group
                 if entry.group_membership_info and entry.name:
-                    # Does contact already have a UID?
-                    uid = None
+                    # Check that contact has one and only one UID.  The
+                    # test for multiple UIDs is in case Google's merge contacts
+                    # combines UIDs from multiple contacts.
+                    uid_obj = None
+                    num_uids_found = 0
                     for obj in entry.extended_property:
                         if obj.name == SYNC_ID_TAG:
-                            uid = obj.value
-                    if not uid:
+                            uid_obj = obj
+                            num_uids_found += 1;
+
+                    if not uid_obj:
                         uid = str(uuid.uuid1())
-                        uid_tag = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
-                        entry.extended_property.append(uid_tag)
+                        uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
+                        entry.extended_property.append(uid_obj)
+                        if debug:
+                            print 'Add UID %s to "%s" (%s)' % (uid, entry.name.full_name.text, email)
                         if enableUpdates:
                             entry = self.gd_client.Update(entry)
 
-                    self.__contacts[uid] = entry
+                    if num_uids_found > 1:
+                        # Drop extra UIDs
+                        p = [obj for obj in entry.extended_property if obj.name != SYNC_ID_TAG]
+                        p.append(uid_obj)
+                        entry.extended_property = p
+                        if debug:
+                            print 'Merge UIDs using %s for "%s" (%s)' % (uid_obj.value, entry.name.full_name.text, email)
+                        if enableUpdates:
+                            entry = self.gd_client.Update(entry)
+
+                    self.__contacts[uid_obj.value] = entry
 
     ##
     ## GetContact --
