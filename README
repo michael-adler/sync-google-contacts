@@ -10,6 +10,9 @@ IF YOU READ NOTHING ELSE:  Pay particular attention to the way contacts are
 merged on the first run.  Duplicate contacts across users will result in
 duplication everywhere.  See the synchronize all contacts section below.
 
+Accounts and passwords are stored in ~/.google/config.  See the sample/config
+file here for an example.
+
 The algorithm:
 
  - Synchronize all group names:
