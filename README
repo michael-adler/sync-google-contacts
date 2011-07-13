@@ -1,0 +1,48 @@
+Synchronize contacts across a set of GMail accounts.  The accounts may be normal
+GMail accounts or in Google Apps.  The script is tested for synchronizing two
+users and only marginally tested for three or more.
+
+Unlike most shared group synchronizers, this script synchronizes all group names
+and then all contacts except for contacts in groups named --private on the
+command line.
+
+IF YOU READ NOTHING ELSE:  Pay particular attention to the way contacts are
+merged on the first run.  Duplicate contacts across users will result in
+duplication everywhere.  See the synchronize all contacts section below.
+
+The algorithm:
+
+ - Synchronize all group names:
+
+   - When first seen, groups are tagged with a unique identifier (UID).
+   - Equivalent groups in each user's account have the same UID.
+   - For new groups without a UID, look for a group of the same name in one of
+     the other user's accounts.
+   - If a group has been renamed by a user, propagate the name change to
+     all groups sharing the UID.
+
+ - Synchronize all contacts:
+
+   - When first seen, contacts are tagged with a unique identifier (UID).
+   - Newly seen contacts are replicated across all groups unless:
+         They are not in any group or
+         they are in a private group.
+
+     NOTE:  There is no effort made to match new contact names to give
+            them a shared UID.  Replication will cause each instance to
+            be replicated everywhere.  In theory, if you then use the
+            Google tools to merge contacts in one account, the next
+            synchronization will replicate the merge everywhere.  This
+            has not been well tested.  The cleanest way to run for the
+            first time is to have empty contact lists in all but one account.
+
+   - Once tagged with a UID, contacts are linked by UID and not by name.
+     Renaming a contact in one account will replicate properly to other users.
+   - Modified contacts replace their corresponding entries in all other
+     accounts.  The script does not detect modification of the same entry
+     in multiple accounts.  One of the modified entries will be replicated
+     and changes to the same contact in other accounts will be lost.
+   - If a contact was replicated and has been newly added to a private group,
+     replicated copies in other user's accounts are deleted.
+   - If a replicated contact is deleted in one account it is deleted in
+     all accounts.
