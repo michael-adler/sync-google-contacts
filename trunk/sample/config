@@ -1,0 +1,15 @@
+##
+## ~/.google/config --
+##
+##   Configuration of accounts for GMail contacts-sync.  The section headers
+##   are "account-" followed by the name passed to contacts-sync --user
+##   parameters.
+##
+
+[account-elvis]
+user: elvis@gmail.com
+password: vegas
+
+[account-jim]
+user: jmorrison@appsdomain.com
+password: oregon

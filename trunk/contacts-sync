@@ -507,7 +507,8 @@ def MergeContacts(users, contacts, pvtGroups):
     ##
     for i in range(len(users)):
         for grp in contacts[i].GroupIterValues():
-            groupIDtoGroup[grp.id.text] = grp
+            if grp.id:
+                groupIDtoGroup[grp.id.text] = grp
 
     ##
     ## Find all modified contacts and replicate them
@@ -589,7 +590,8 @@ def AddContactToUser(contacts, srcEntry):
     entry.group_membership_info = []
     for grp in srcEntry.group_membership_info:
         new_grp = contacts.GetGroup(groupIDtoGroup[grp.href].SyncGetUID())
-        entry.group_membership_info.append(gdata.contacts.data.GroupMembershipInfo(href = new_grp.id.text))
+        if new_grp.id:
+            entry.group_membership_info.append(gdata.contacts.data.GroupMembershipInfo(href = new_grp.id.text))
 
     # Drop ID and ETag that belonged to the original user's copy
     entry.id = None
@@ -615,7 +617,8 @@ def UpdateContactInUser(contacts, srcEntry):
     entry.group_membership_info = []
     for grp in srcEntry.group_membership_info:
         new_grp = contacts.GetGroup(groupIDtoGroup[grp.href].SyncGetUID())
-        entry.group_membership_info.append(gdata.contacts.data.GroupMembershipInfo(href = new_grp.id.text))
+        if new_grp.id:
+            entry.group_membership_info.append(gdata.contacts.data.GroupMembershipInfo(href = new_grp.id.text))
 
     # Use the ID and ETag from the current entry
     entry.id = cur_entry.id
@@ -725,7 +728,7 @@ def main():
     pvt_groups = sets.Set()
     for i in range(len(users)):
         for grp in contacts[i].GroupIterValues():
-            if grp.title.text in pvt_grp_names:
+            if grp.title.text in pvt_grp_names and grp.id:
                 pvt_groups.add(grp.id.text)
 
     ## Merge contacts across all users
