@@ -35,7 +35,6 @@ import urllib
 import uuid
 import copy
 import pickle
-import sets
 import atom
 import gdata.contacts.data
 import gdata.contacts.client as gdc
@@ -718,7 +717,7 @@ def main():
     global enableUpdates
     global debug
     users = []
-    pvt_grp_names = sets.Set()
+    pvt_grp_names = set()
 
     # Parse command line options
     try:
@@ -757,7 +756,7 @@ def main():
     MergeGroups(users, contacts)
 
     ## Compute the set of all private groups (indexed by HREF)
-    pvt_groups = sets.Set()
+    pvt_groups = set()
     for i in range(len(users)):
         for grp in contacts[i].GroupIterValues():
             if grp.title.text in pvt_grp_names and grp.id:
