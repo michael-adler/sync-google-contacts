@@ -327,7 +327,7 @@ def ContactDebugDump(self):
         r += '  Relation: %s (%s)\n' % (rel.text, rel.rel)
 
     for obj in entry.user_defined_field:
-        r += '  User Defined: %s (%s)\n' % (obj.value, obj.label)
+        r += '  User Defined: %s (%s)\n' % (obj.value, obj.key)
 
     for website in entry.website:
         rel = re.sub('.*#', '', website.rel)
