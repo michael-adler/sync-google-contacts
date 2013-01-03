@@ -56,7 +56,7 @@ debug = False
 class UserContacts(object):
     """UserContacts object loads Google contacts from an account"""
 
-    def __init__(self, user):
+    def __init__(self, user, createuid = True):
         """Constructor for the UserContacts object.
 
         Takes an email and password corresponding to a gmail account.
@@ -77,7 +77,7 @@ class UserContacts(object):
 
         config = ConfigParser.SafeConfigParser()
         config.read(os.path.expanduser('~') + '/.google/config')
-        email = config.get('account' + user, 'user')
+        self.email = email = config.get('account' + user, 'user')
         password = config.get('account' + user, 'password')
 
         ##
@@ -100,6 +100,7 @@ class UserContacts(object):
         ## Load all contacts
         ##
         self.__contacts = dict()
+        self.nouids = set([])
         query = gdc.ContactsQuery(max_results=10000)
         feed = self.gd_client.GetContacts(q=query)
         if feed:
@@ -117,6 +118,13 @@ class UserContacts(object):
                             num_uids_found += 1;
 
                     if not uid_obj:
+                        # When syncing a new account for the first time we
+                        # don't want to create uid without first checking
+                        # duplicate names.  so just store these entries.
+                        if not createuid:
+                            self.nouids.add(entry)
+                            continue
+
                         uid = str(uuid.uuid1())
                         uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
                         entry.extended_property.append(uid_obj)
@@ -266,6 +274,30 @@ class UserContacts(object):
     def DumpGroups(self):
         for id, entry in self.__groups.iteritems():
             print ' %s: %s' % (id, entry.DebugDump())
+
+
+##
+## Add uid to all entries, possibly using uid from entries with same name
+##
+def AddUids(contacts):
+
+    # map name to (uid, account email address) for all accounts
+    name2uid = dict([(ContactGetPrintName(entry), (uid, c.email)) for c in contacts for uid, entry in c.ContactIterItems()])
+
+    for c in contacts:
+        for e in c.nouids:
+            # use already existing uid if possible
+            if ContactGetPrintName(e) in name2uid:
+                (uid, email) = name2uid[ContactGetPrintName(e)]
+                if debug: print 'Add UID %s to "%s" (%s) from pre-existing user in account %s' % (uid, e.GetPrintName(), c.email, email)
+            else:
+                uid = str(uuid.uuid1())
+                if debug: print 'Add UID %s to "%s" (%s)' % (uid, e.GetPrintName(), c.email)
+
+            uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
+            e.extended_property.append(uid_obj)
+            if enableUpdates:
+                e = c.gd_client.Update(e)
 
 
 ################################################################################
@@ -716,12 +748,13 @@ def main():
 
     global enableUpdates
     global debug
+    addingnewaccount = False
     users = []
     pvt_grp_names = set()
 
     # Parse command line options
     try:
-        opts, args = getopt.getopt(sys.argv[1:], '', ['user=', 'private=', 'dry-run', 'debug', 'help'])
+        opts, args = getopt.getopt(sys.argv[1:], '', ['user=', 'private=', 'dry-run', 'debug', 'help', 'addingnewaccount'])
     except getopt.error, msg:
         usage(2)
 
@@ -735,11 +768,26 @@ def main():
             enableUpdates = False
         elif option == '--debug':
             debug = True
+        elif option == '--addingnewaccount':
+            addingnewaccount = True
         elif option == '--help':
             usage(0)
 
     if len(users) == 0:
         usage(2)
+
+    ##
+    ## If adding a new account use the name of contact to set uid
+    ##
+    if addingnewaccount:
+        contacts = []
+        for i in range(len(users)):
+            try:
+                contacts.append(UserContacts(users[i], createuid = False))
+            except gdata.client.BadAuthentication:
+                print 'Invalid user credentials given for user %s.' % (users[i])
+                sys.exit(1)
+        AddUids(contacts)
 
     ##
     ## Open connection to Google server and load current state for each user.

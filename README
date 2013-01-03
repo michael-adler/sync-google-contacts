@@ -35,9 +35,12 @@ The algorithm:
             them a shared UID.  Replication will cause each instance to
             be replicated everywhere.  If you then use the Google tools
             to merge contacts in one account, the next synchronization
-            will replicate the merge everywhere.  The cleanest way to run
-            for the first time is to have empty contact lists in all but
-            one account.
+            will replicate the merge everywhere.
+
+            Avoid this when adding a new account with the --addingnewaccount
+            switch, which attempts to find equivalent names and assign
+            existing UIDs to them.  Differences in contact data for
+            existing names may still cause problems.
 
    - Once tagged with a UID, contacts are linked by UID and not by name.
      Renaming a contact in one account will replicate properly to other users.
