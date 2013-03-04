@@ -1,0 +1,3 @@
+= Introduction =
+
+See the [https://code.google.com/p/sync-google-contacts/source/browse/trunk/README README] file for a description of the script and installation instructions.
