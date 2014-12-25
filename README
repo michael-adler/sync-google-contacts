@@ -6,6 +6,10 @@ Unlike most shared group synchronizers, this script synchronizes all group names
 and then all contacts except for contacts in groups named --private on the
 command line.
 
+This contacts-sync Python script depends on the Google Data APIs Python Client
+Library (https://code.google.com/p/gdata-python-client) which must be installed
+separately.
+
 IF YOU READ NOTHING ELSE:  Pay particular attention to the way contacts are
 merged on the first run.  Duplicate contacts across users will result in
 duplication everywhere.  See the synchronize all contacts section below.
