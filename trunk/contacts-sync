@@ -129,7 +129,9 @@ class UserContacts(object):
                         uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
                         entry.extended_property.append(uid_obj)
                         if debug:
-                            print 'Add UID %s to "%s" (%s)' % (uid, entry.GetPrintName(), email)
+                            print 'Add UID %s to "%s" (%s)' % (uid,
+                                                               entry.GetPrintName().encode('utf-8'),
+                                                               email)
                         if enableUpdates:
                             entry = self.gd_client.Update(entry)
 
@@ -139,7 +141,9 @@ class UserContacts(object):
                         p.append(uid_obj)
                         entry.extended_property = p
                         if debug:
-                            print 'Merge UIDs using %s for "%s" (%s)' % (uid_obj.value, entry.GetPrintName(), email)
+                            print 'Merge UIDs using %s for "%s" (%s)' % (uid_obj.value,
+                                                                         entry.GetPrintName().encode('utf-8'),
+                                                                         email)
                         if enableUpdates:
                             entry = self.gd_client.Update(entry)
 
@@ -289,10 +293,10 @@ def AddUids(contacts):
             # use already existing uid if possible
             if ContactGetPrintName(e) in name2uid:
                 (uid, email) = name2uid[ContactGetPrintName(e)]
-                if debug: print 'Add UID %s to "%s" (%s) from pre-existing user in account %s' % (uid, e.GetPrintName(), c.email, email)
+                if debug: print 'Add UID %s to "%s" (%s) from pre-existing user in account %s' % (uid, e.GetPrintName().encode('utf-8'), c.email, email)
             else:
                 uid = str(uuid.uuid1())
-                if debug: print 'Add UID %s to "%s" (%s)' % (uid, e.GetPrintName(), c.email)
+                if debug: print 'Add UID %s to "%s" (%s)' % (uid, e.GetPrintName().encode('utf-8'), c.email)
 
             uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
             e.extended_property.append(uid_obj)
@@ -581,10 +585,10 @@ def MergeContacts(users, contacts, pvtGroups):
             # Was the contact modified since the last sync?
             name = entry.GetPrintName()
             if not key in prev_state[i]:
-                print "Contact: \"%s\" (%s) is new" % (name, users[i])
+                print "Contact: \"%s\" (%s) is new" % (name.encode('utf-8'), users[i])
                 modified = True
             elif entry.updated.text != prev_state[i][key]['updated']:
-                print "Contact: \"%s\" (%s) is modified" % (name, users[i])
+                print "Contact: \"%s\" (%s) is modified" % (name.encode('utf-8'), users[i])
                 modified = True
                 if debug:
                     print '  Old: date %s, etag %s' % (prev_state[i][key]['updated'], prev_state[i][key]['etag'])
@@ -604,15 +608,15 @@ def MergeContacts(users, contacts, pvtGroups):
                     c = contacts[j].GetContact(key)
                     if c:
                         if is_private:
-                            print "Contact: delete \"%s\" (%s) marked private by %s" % (name, users[j], users[i])
+                            print "Contact: delete \"%s\" (%s) marked private by %s" % (name.encode('utf-8'), users[j], users[i])
                             contacts[j].ContactDelete(c)
                             del prev_state[j][key]
                         elif modified:
-                            print "Contact: update \"%s\" (%s)" % (name, users[j])
+                            print "Contact: update \"%s\" (%s)" % (name.encode('utf-8'), users[j])
                             new_entry = UpdateContactInUser(contacts[j], entry)
                             prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
                     elif not is_private and (modified or not key in prev_state[j]):
-                        print "Contact: add \"%s\" (%s)" % (name, users[j])
+                        print "Contact: add \"%s\" (%s)" % (name.encode('utf-8'), users[j])
                         new_entry = AddContactToUser(contacts[j], entry)
                         prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
 
@@ -626,7 +630,7 @@ def MergeContacts(users, contacts, pvtGroups):
                     c = contacts[j].GetContact(uid)
                     if c:
                         name = c.GetPrintName()
-                        print "Contact: delete \"%s\" (%s) deleted by %s" % (name, users[j], users[i])
+                        print "Contact: delete \"%s\" (%s) deleted by %s" % (name.encode('utf-8'), users[j], users[i])
                         contacts[j].ContactDelete(c)
 
     ##
