@@ -1,0 +1,1 @@
+Python script to keep a set of contacts synchronized across multiple GMail accounts.  It is expected the script would be run regularly (perhaps as a cron job).
