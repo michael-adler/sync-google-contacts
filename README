@@ -1,3 +1,67 @@
+added a hack job of oauth2 for multiple accounts. you ONLY need a username in the .google/config file for each user section.
+requires console setup for each user's authentication file.
+
+directory structure:
+
+root@DC1:/custom/contact-sync# ls -la -R
+.:
+total 10828
+drwxr-xr-x 3 root root    4096 Jun  4 21:24 .
+drwxr-xr-x 4 root root    4096 Jun  3 22:59 ..
+-rw-r--r-- 1 root root   36053 Jun  4 11:04 contacts-sync.py
+drwxr-xr-x 3 root root    4096 Jun  3 23:00 .google
+-rw-r--r-- 1 root root    1732 Jun  3 22:59 IYH-Google-Contact-Sync-279664c30d53.p12
+
+./.google:
+total 12
+drwxr-xr-x 3 root root 4096 Jun  3 23:00 .
+drwxr-xr-x 3 root root 4096 Jun  4 21:24 ..
+drwxr-xr-x 2 root root 4096 Jun  4 10:55 authdata
+
+./.google/authdata:
+total 72
+drwxr-xr-x 2 root root 4096 Jun  4 10:55 .
+drwxr-xr-x 3 root root 4096 Jun  3 23:00 ..
+-rw------- 1 root root  859 Jun  4 08:02 accounting@sub.domain.tld.dat
+-rw------- 1 root root  859 Jun  4 08:02 user1@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 user2@sub.domain.tld.dat
+-rw------- 1 root root  859 Jun  4 08:02 user2@sub.domain.tld.dat
+-rw-r--r-- 1 root root  428 Jun  4 08:02 client_secret.apps.googleusercontent.com.json
+-rw------- 1 root root  817 Jun  4 08:02 dk@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 iy@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 ja@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 jt@sub.domain.tld.dat
+-rw------- 1 root root  859 Jun  4 08:02 jm@sub.domain.tld.dat
+-rw------- 1 root root  859 Jun  4 08:02 jo@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 ms@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 mn@sub.domain.tld.dat
+-rw------- 1 root root  859 Jun  4 08:02 nn@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 py@sub.domain.tld.dat
+-rw------- 1 root root  817 Jun  4 08:02 sb@sub.domain.tld.dat
+
+
+
+
+
+Update:
+to fix XML Issues, update line 525ish of
+/usr/local/lib/python2.7/dist-packages/atom/core.py
+
+
+change it from:
+
+  tree = ElementTree.fromstring(xml_string)
+  return _xml_element_from_tree(tree, target_class, version)
+
+to read as:
+  xml_string = string.replace(xml_string, r'<gd:extendedProperty name="google_apps_sync">', '<gd:extendedProperty xmlns:gd="http://schemas.google_apps_sync.com/contact/2008" xmlns:ns3="http://schemas.google_apps_sync.com/contact/2008"$
+  tree = ElementTree.fromstring(xml_string)
+  return _xml_element_from_tree(tree, target_class, version)
+adding the xml string line. (we're having to provide a google api with a reference to it's own xml namespace folks)
+
+
+
+
 Synchronize contacts across a set of GMail accounts.  The accounts may be normal
 GMail accounts or in Google Apps.  The script is tested for synchronizing two
 users and only marginally tested for three or more.
