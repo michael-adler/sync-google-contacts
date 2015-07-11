@@ -111,7 +111,7 @@ class UserContacts(object):
 #        self.gd_client.ClientLogin(email, password, self.gd_client.source)
         SCOPES = ['https://www.google.com/m8/feeds/', 'https://www.googleapis.com/auth/userinfo.email']
         if debug:
-                                print 'User = '+email
+            print 'User = '+email
 
 
         SCOPE = 'https://www.google.com/m8/feeds'
@@ -120,11 +120,12 @@ class UserContacts(object):
 # https://code.google.com/apis/console/#project:<PROJECT_ID>:access
 # where <PROJECT_ID> is the ID of your project
 
-        flow = flow_from_clientsecrets('./.google/authdata/client_secret_976746689114-2mtt9ci42ie45hn00irn80h28vkktms8.apps.googleusercontent.com.json',
+        print "Authenticating %s" % email
+        flow = flow_from_clientsecrets(os.path.expanduser('~') + '/.google/authdata/client_secret.json',
                                scope=SCOPE,
                                redirect_uri='http://localhost')
 
-        storage = Storage('./.google/authdata/'+email+'.dat')
+        storage = Storage(os.path.expanduser('~') + '/.google/authdata/'+email+'.dat')
         credentials = storage.get()
         flags = tools.argparser.parse_args(args=['--noauth_local_webserver', '--logging_level=DEBUG'])
         if credentials is None or credentials.invalid:
