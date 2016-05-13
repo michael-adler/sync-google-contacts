@@ -125,41 +125,21 @@ class UserContacts(object):
                                scope=SCOPE,
                                redirect_uri='http://localhost')
 
+
         storage = Storage(os.path.expanduser('~') + '/.google/authdata/'+email+'.dat')
         credentials = storage.get()
         flags = tools.argparser.parse_args(args=['--noauth_local_webserver', '--logging_level=DEBUG'])
-        if credentials is None or credentials.invalid:
-            if isCron:
-                    credentials = tools.run_flow(flow, storage, flags)
-            else:
-                    print 'please re-authorise user '+email
-                    sys.exit("not synced!")
-# Munge the data in the credentials into a gdata OAuth2Token
-# This is based on information in this blog post:
-# https://groups.google.com/forum/m/#!msg/google-apps-developer-blog/1pGRCivuSUI/3EAIioKp0-wJ
 
-        auth2token = gdata.gauth.OAuth2Token(client_id=credentials.client_id,
-          client_secret=credentials.client_secret,
-          scope=SCOPE,
-          access_token=credentials.access_token,
-          refresh_token=credentials.refresh_token,
-          user_agent=email)
-# Create a gdata client
+        http = httplib2.Http()
 
+        if credentials is None or credentials.invalid == True:
+          credentials = tools.run_flow(flow, storage, flags)
+        else:
+          credentials.refresh(http)
 
-        self.gd_client = gdata.contacts.client.ContactsClient(domain='pdx.iyhusa.com',
-                                        auth_token=auth2token)
+        self.gd_client = gdata.contacts.client.ContactsClient(domain='pdx.iyhusa.com')
+        self.gd_client.auth_token = gdata.gauth.OAuth2TokenFromCredentials(credentials)
 
-        #global gd_client1
-        #gd_client1 = gdata.contacts.client.ContactsClient(domain='pdx.iyhusa.com',
-#                                        auth_token=auth2token)
-
-# Authorize it
-#       pprint (vars(self.gd_client))
-        auth2token.authorize(self.gd_client)
-#       auth2token.authorize(gd_client1)
-        if debug:
-                        print 'authorized'
         ##
         ## Load all groups
         ##
