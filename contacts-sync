@@ -123,13 +123,11 @@ class UserContacts(object):
         ##
         self.__contacts = dict()
         self.nouids = set([])
-        start_index = 1
-        while True:
-            query = gdc.ContactsQuery(max_results=MAX_RESULTS, start_index=start_index)
-            feed = self.gd_client.GetContacts(q=query)
-            for entry in feed.entry:
-                start_index = start_index + 1
 
+        query = gdc.ContactsQuery(max_results=MAX_RESULTS)
+        feed = self.gd_client.GetContacts(q=query)
+        while feed:
+            for entry in feed.entry:
                 # Ignore contacts without names or not belonging to any group
                 if entry.group_membership_info and entry.GetPrintName():
                     # Check that contact has one and only one UID.  The
@@ -175,8 +173,12 @@ class UserContacts(object):
                     self.__contacts[uid_obj.value] = entry
 
             # Done?
-            if not feed.get_next_link():
-                break
+            next_link = feed.GetNextLink()
+            if next_link:
+                feed = self.gd_client.GetContacts(uri=next_link.href)
+            else:
+                feed = None
+
 
     ##
     ## GetContact --
