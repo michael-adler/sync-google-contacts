@@ -36,7 +36,7 @@ import pickle
 import atom
 import gdata.contacts.data
 import gdata.contacts.client as gdc
-
+import time
 from oauth2client.client import flow_from_clientsecrets
 from oauth2client.file import Storage
 from oauth2client import tools
@@ -196,7 +196,27 @@ class UserContacts(object):
     ##
     def ContactAdd(self, entry):
         if enableUpdates:
-            entry = self.gd_client.CreateContact(entry)
+            for i in range(0,1):
+                retrycount = 0
+                while True:
+                    try:
+                        if debug:
+                            print "adding...",
+                        entry = self.gd_client.CreateContact(entry)
+                    except:
+                        retrycount += 1
+                        if retrycount > 5:
+                            sys.exit(1)
+                        if debug:
+                            print ".retry.",
+                        time.sleep(0.5)
+                    else:
+                        if debug:
+                            print "success"
+                        break
+                else:
+                     break
+                     
         self.__contacts[entry.SyncGetUID()] = entry
         return entry
 
@@ -206,7 +226,27 @@ class UserContacts(object):
     ##
     def ContactUpdate(self, entry):
         if enableUpdates:
-            entry = self.gd_client.Update(entry)
+            for i in range(0,1):
+                retrycount = 0
+                while True:
+                    try:
+                        if debug:
+                            print "updating...",
+                        entry = self.gd_client.Update(entry)
+                    except:
+                        retrycount += 1
+                        if retrycount > 5:
+                            sys.exit(1)
+                        if debug:
+                            print ".retry.",
+                        time.sleep(0.5)
+                    else:
+                        if debug:
+                            print "success"
+                        break
+                else:
+                     break
+                     
         self.__contacts[entry.SyncGetUID()] = entry
         return entry
 
@@ -217,7 +257,28 @@ class UserContacts(object):
     def ContactDelete(self, entry):
         del self.__contacts[entry.SyncGetUID()]
         if enableUpdates:
-            return self.gd_client.Delete(entry)
+            for i in range(0,1):
+                retrycount = 0
+                while True:
+                    try:
+                        if debug:
+                            print "deleting...",
+                        return self.gd_client.Delete(entry)
+                    except:
+                        retrycount += 1
+                        if retrycount > 5:
+                            sys.exit(1)
+                        if debug:
+                            print ".retry.",
+                        time.sleep(0.5)
+                    else:
+                        if debug:
+                            print "success"
+                        break
+                else:
+                     break
+                     
+            
 
     ##
     ## ContactIterItems --
@@ -332,7 +393,28 @@ def AddUids(contacts):
             uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
             e.extended_property.append(uid_obj)
             if enableUpdates:
-                e = c.gd_client.Update(e)
+               for i in range(0,1):
+                    retrycount = 0
+                    while True:
+                        try:
+                            if debug:
+                                print "Adding UID...",
+                            e = c.gd_client.Update(e)
+                        except:
+                            retrycount += 1
+                            if retrycount > 5:
+                                sys.exit(1)
+                            if debug:
+                                print ".retry.",
+                            time.sleep(0.5)
+                        else:
+                            if debug:
+                                print "success"
+                            break
+                    else:
+                        break
+                     
+               
 
 
 ################################################################################
@@ -803,9 +885,7 @@ def main():
         contacts = []
         for i in range(len(users)):
             try:
-                contacts.append(UserContacts(users[i],
-                                             flags = flags,
-                                             createuid = False))
+                contacts.append(UserContacts(users[i], flags = flags, createuid = False))
             except:
                 print 'Invalid user credentials given for user %s.' % (users[i])
                 sys.exit(1)
@@ -831,6 +911,7 @@ def main():
         for grp in contacts[i].GroupIterValues():
             if grp.title.text in pvt_grp_names and grp.id:
                 pvt_groups.add(grp.id.text)
+                print pvt_groups
 
     ## Merge contacts across all users
     MergeContacts(users, contacts, pvt_groups)
