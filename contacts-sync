@@ -907,11 +907,12 @@ def main():
 
     ## Compute the set of all private groups (indexed by HREF)
     pvt_groups = set()
-    for i in range(len(users)):
-        for grp in contacts[i].GroupIterValues():
-            if grp.title.text in pvt_grp_names and grp.id:
-                pvt_groups.add(grp.id.text)
-                print pvt_groups
+    if flags.private:
+        for i in range(len(users)):
+            for grp in contacts[i].GroupIterValues():
+                if grp.title.text in pvt_grp_names and grp.id:
+                    pvt_groups.add(grp.id.text)
+                    print pvt_groups
 
     ## Merge contacts across all users
     MergeContacts(users, contacts, pvt_groups)
