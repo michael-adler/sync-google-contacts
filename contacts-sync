@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 
 """Synchronize contacts among a set of GMail accounts."""
 
@@ -29,7 +29,6 @@ import pprint
 import os
 import sys
 import re
-import urllib
 import uuid
 import copy
 import pickle
@@ -50,7 +49,6 @@ SYNC_ID_TAG = 'csync-uid'
 
 enableUpdates = True
 debug = False
-
 
 ################################################################################
 #
@@ -75,7 +73,7 @@ class UserContacts(object):
         ##
 
         if user == None:
-            print 'Must supply a user name!'
+            print('Must supply a user name!')
             sys.exit(1)
 
         # Try to read existing credentials
@@ -86,7 +84,7 @@ class UserContacts(object):
 
         # Success?  If not then get a new token.
         if credentials is None or credentials.invalid:
-            print 'Need new token for ' + user + ':'
+            print('Need new token for ' + user + ':')
             flow = flow_from_clientsecrets(os.path.join(user_dir, SECRET_JSON),
                                            scope=SCOPE,
                                            redirect_uri = 'urn:ietf:wg:oauth:2.0:oob')
@@ -152,9 +150,9 @@ class UserContacts(object):
                         uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
                         entry.extended_property.append(uid_obj)
                         if debug:
-                            print 'Add UID %s to "%s" (%s)' % (uid,
-                                                               entry.GetPrintName().encode('utf-8'),
-                                                               user)
+                            print('Add UID {0} to "{1}" ({2})'.format(uid,
+	                                                              entry.GetPrintName(),
+	                                                              user))
                         if enableUpdates:
                             entry = self.gd_client.Update(entry)
 
@@ -164,9 +162,9 @@ class UserContacts(object):
                         p.append(uid_obj)
                         entry.extended_property = p
                         if debug:
-                            print 'Merge UIDs using %s for "%s" (%s)' % (uid_obj.value,
-                                                                         entry.GetPrintName().encode('utf-8'),
-                                                                         user)
+                            print('Merge UIDs using {0} for "{1}" ({2})'.format(uid_obj.value,
+                                                                                entry.GetPrintName(),
+                                                                                user))
                         if enableUpdates:
                             entry = self.gd_client.Update(entry)
 
@@ -224,14 +222,14 @@ class UserContacts(object):
     ##     Contact object iterator
     ##
     def ContactIterItems(self):
-        return self.__contacts.iteritems()
+        return iter(self.__contacts.items())
 
     ##
     ## ContactIterValues --
     ##     Contact object iterator
     ##
     def ContactIterValues(self):
-        return self.__contacts.itervalues()
+        return iter(self.__contacts.values())
 
     ##
     ## GetGroup --
@@ -300,15 +298,15 @@ class UserContacts(object):
     ##     Group object iterator
     ##
     def GroupIterValues(self):
-        return self.__groups.itervalues()
+        return iter(self.__groups.values())
 
     ##
     ## DumpGroups --
     ##     Dump group data and IDs.
     ##
     def DumpGroups(self):
-        for id, entry in self.__groups.iteritems():
-            print ' %s: %s' % (id, entry.DebugDump())
+        for id, entry in self.__groups.items():
+            print(' %s: %s' % (id, entry.DebugDump()))
 
 
 ##
@@ -324,10 +322,11 @@ def AddUids(contacts):
             # use already existing uid if possible
             if ContactGetPrintName(e) in name2uid:
                 (uid, email) = name2uid[ContactGetPrintName(e)]
-                if debug: print 'Add UID %s to "%s" (%s) from pre-existing user in account %s' % (uid, e.GetPrintName().encode('utf-8'), c.email, email)
+                if debug: print('Add UID {0} to "{1}" ({2}) from pre-existing user in account {3}'.format(
+	                        uid, e.GetPrintName(), c.email, email))
             else:
                 uid = str(uuid.uuid1())
-                if debug: print 'Add UID %s to "%s" (%s)' % (uid, e.GetPrintName().encode('utf-8'), c.email)
+                if debug: print('Add UID {0} to "{1}" ({2})'.format(uid, e.GetPrintName(), c.email))
 
             uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
             e.extended_property.append(uid_obj)
@@ -533,14 +532,14 @@ def MergeGroups(users, contacts):
         for grp in contacts[i].GroupIterValues():
             uid = grp.SyncGetUID()
             if uid and (grp.title.text != all_groups_by_uid[uid]['name']):
-                print 'Group: renaming from %s to %s (%s)' % (grp.title.text, all_groups_by_uid[uid]['name'], users[i])
+                print('Group: renaming from %s to %s (%s)' % (grp.title.text, all_groups_by_uid[uid]['name'], users[i]))
                 contacts[i].GroupRename(uid, all_groups_by_uid[uid]['name'])
 
     ##
     ## Build an inverse index from name to uid
     ##
     group_name_to_uid = dict()
-    for uid, g in all_groups_by_uid.iteritems():
+    for uid, g in all_groups_by_uid.items():
         group_name_to_uid[g['name']] = uid
 
     ##
@@ -561,7 +560,7 @@ def MergeGroups(users, contacts):
     ##
     ## Assign UIDs to new groups across all users.
     ##
-    for name in all_groups_by_name.iterkeys():
+    for name in all_groups_by_name.keys():
         # Is there already a UID?
         if name in group_name_to_uid:
             uid = group_name_to_uid[name]
@@ -572,10 +571,10 @@ def MergeGroups(users, contacts):
             if all_groups_by_name[name][i]:
                 old_tag = all_groups_by_name[name][i].SyncGetTag()
                 if old_tag != uid:
-                    print 'Group: setting %s (%s) to UID %s' % (name, users[i], uid)
+                    print('Group: setting %s (%s) to UID %s' % (name, users[i], uid))
                     contacts[i].GroupChangeID(old_tag, uid)
             else:
-                print 'Group: adding %s (%s) with UID %s' % (name, users[i], uid)
+                print('Group: adding %s (%s) with UID %s' % (name, users[i], uid))
                 contacts[i].GroupAdd(uid, name)
     
 
@@ -616,14 +615,14 @@ def MergeContacts(users, contacts, pvtGroups):
             # Was the contact modified since the last sync?
             name = entry.GetPrintName()
             if not key in prev_state[i]:
-                print "Contact: \"%s\" (%s) is new" % (name.encode('utf-8'), users[i])
+                print("Contact: \"{0}\" ({1}) is new".format(name, users[i]))
                 modified = True
             elif entry.updated.text != prev_state[i][key]['updated']:
-                print "Contact: \"%s\" (%s) is modified" % (name.encode('utf-8'), users[i])
+                print("Contact: \"{0}\" ({1}) is modified".format(name, users[i]))
                 modified = True
                 if debug:
-                    print '  Old: date %s, etag %s' % (prev_state[i][key]['updated'], prev_state[i][key]['etag'])
-                    print '  New: date %s, etag %s' % (entry.updated.text, entry.etag)
+                    print('  Old: date %s, etag %s' % (prev_state[i][key]['updated'], prev_state[i][key]['etag']))
+                    print('  New: date %s, etag %s' % (entry.updated.text, entry.etag))
             else:
                 modified = False
 
@@ -639,15 +638,15 @@ def MergeContacts(users, contacts, pvtGroups):
                     c = contacts[j].GetContact(key)
                     if c:
                         if is_private:
-                            print "Contact: delete \"%s\" (%s) marked private by %s" % (name.encode('utf-8'), users[j], users[i])
+                            print("Contact: delete \"{0}\" ({1}) marked private by {2}".format(name, users[j], users[i]))
                             contacts[j].ContactDelete(c)
                             del prev_state[j][key]
                         elif modified:
-                            print "Contact: update \"%s\" (%s)" % (name.encode('utf-8'), users[j])
+                            print("Contact: update \"{0}\" ({1})".format(name, users[j]))
                             new_entry = UpdateContactInUser(contacts[j], entry)
                             prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
                     elif not is_private and (modified or not key in prev_state[j]):
-                        print "Contact: add \"%s\" (%s)" % (name.encode('utf-8'), users[j])
+                        print("Contact: add \"{0}\" ({1})".format(name, users[j]))
                         new_entry = AddContactToUser(contacts[j], entry)
                         prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
 
@@ -661,7 +660,7 @@ def MergeContacts(users, contacts, pvtGroups):
                     c = contacts[j].GetContact(uid)
                     if c:
                         name = c.GetPrintName()
-                        print "Contact: delete \"%s\" (%s) deleted by %s" % (name.encode('utf-8'), users[j], users[i])
+                        print("Contact: delete \"{0}\" ({1}) deleted by {2}".format(name, users[j], users[i]))
                         contacts[j].ContactDelete(c)
 
     ##
@@ -736,7 +735,7 @@ def UpdateContactInUser(contacts, srcEntry):
 def LoadPrevContactState(user):
     fn = os.path.expanduser('~') + '/.google/contacts-sync-state-' + user
     try:
-        f = open(fn, 'r')
+        f = open(fn, 'rb')
         state = pickle.load(f)
         f.close()
     except IOError:
@@ -750,7 +749,7 @@ def LoadPrevContactState(user):
 ##
 def SaveContactState(user, state):
     fn = os.path.expanduser('~') + '/.google/contacts-sync-state-' + user
-    f = open(fn, 'w')
+    f = open(fn, 'wb')
     pickle.dump(state, f)
     f.close()
 
@@ -807,7 +806,7 @@ def main():
                                              flags = flags,
                                              createuid = False))
             except:
-                print 'Invalid user credentials given for user %s.' % (users[i])
+                print('Invalid user credentials given for user %s.' % (users[i]))
                 sys.exit(1)
         AddUids(contacts)
 
@@ -819,7 +818,7 @@ def main():
         try:
             contacts.append(UserContacts(users[i], flags = flags))
         except:
-            print 'Invalid user credentials given for user %s.' % (users[i])
+            print('Invalid user credentials given for user %s.' % (users[i]))
             sys.exit(1)
 
     ## Merge groups across all users
