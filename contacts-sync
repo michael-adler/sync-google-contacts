@@ -3,12 +3,12 @@
 """Synchronize contacts among a set of GMail accounts."""
 
 __author__ = "Michael Adler"
-__copyright__ = "Copyright 2011 Michael Adler"
+__copyright__ = "Copyright 2021 Michael Adler"
 __license__ = "GPL"
-__version__ = "0.1"
+__version__ = "0.2"
 
 ##
-## Copyright 2011 Michael Adler
+## Copyright 2021 Michael Adler
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License
@@ -25,16 +25,17 @@ __version__ = "0.1"
 ##
 
 import argparse
-import pprint
 import os
 import sys
 import re
 import uuid
 import copy
 import pickle
-import atom
-import gdata.contacts.data
-import gdata.contacts.client as gdc
+import time
+
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 
 from oauth2client.client import flow_from_clientsecrets
 from oauth2client.file import Storage
@@ -42,10 +43,14 @@ from oauth2client import tools
 from oauth2client.tools import run_flow
 
 SECRET_JSON = '.google/authdata/client_secret.json'
-SCOPE = 'https://www.google.com/m8/feeds/'
+SCOPES = ['https://www.googleapis.com/auth/contacts']
 
 MAX_RESULTS = 10000
 SYNC_ID_TAG = 'csync-uid'
+
+PERSON_FIELDS = 'addresses,ageRanges,biographies,birthdays,calendarUrls,clientData,coverPhotos,emailAddresses,events,externalIds,genders,imClients,interests,locales,locations,memberships,metadata,miscKeywords,names,nicknames,occupations,organizations,phoneNumbers,photos,relations,sipAddresses,skills,urls,userDefined'
+PERSON_FIELDS_UPDATE = 'addresses,biographies,birthdays,clientData,emailAddresses,events,externalIds,genders,imClients,interests,locales,locations,memberships,miscKeywords,names,nicknames,occupations,organizations,phoneNumbers,relations,sipAddresses,skills,urls,userDefined'
+GROUP_FIELDS = 'metadata,groupType,memberCount,name,clientData'
 
 enableUpdates = True
 debug = False
@@ -78,105 +83,133 @@ class UserContacts(object):
 
         # Try to read existing credentials
         user_dir = os.path.expanduser('~')
-        fn = user_dir + '/.google/authdata/contacts-credentials-' + user + '.dat'
-        storage = Storage(fn)
-        credentials = storage.get()
+        token_fn = user_dir + '/.google/authdata/contacts-credentials-' + user + '.json'
 
-        # Success?  If not then get a new token.
-        if credentials is None or credentials.invalid:
-            print('Need new token for ' + user + ':')
-            flow = flow_from_clientsecrets(os.path.join(user_dir, SECRET_JSON),
-                                           scope=SCOPE,
-                                           redirect_uri = 'urn:ietf:wg:oauth:2.0:oob')
-            auth_flags = tools.argparser.parse_args(args=['--noauth_local_webserver',
-                                                    '--logging_level=DEBUG'])
-            credentials = run_flow(flow, storage, auth_flags)
+        creds = None
+        # The file token.json stores the user's access and refresh tokens, and is
+        # created automatically when the authorization flow completes for the first
+        # time.
+        if os.path.exists(token_fn):
+            creds = Credentials.from_authorized_user_file(token_fn, SCOPES)
+        # If there are no (valid) credentials available, let the user log in.
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                # Save the credentials for the next run
+                with open(token_fn, 'w') as token:
+                    token.write(creds.to_json())
+            else:
+                print('Need new token for ' + user + ':')
+                flow = flow_from_clientsecrets(os.path.join(user_dir, SECRET_JSON),
+                                               scope=SCOPES,
+                                               redirect_uri = 'urn:ietf:wg:oauth:2.0:oob')
+                auth_flags = tools.argparser.parse_args(args=['--noauth_local_webserver',
+                                                        '--logging_level=DEBUG'])
+                creds = run_flow(flow, Storage(token_fn), auth_flags)
 
-        # Finally get the token
-        auth2token = gdata.gauth.OAuth2Token(client_id = credentials.client_id,
-                                             client_secret = credentials.client_secret,
-                                             scope = SCOPE,
-                                             access_token = credentials.access_token,
-                                             refresh_token = credentials.refresh_token,
-                                             user_agent = 'contacts-mgt')
+        self.__service = build('people', 'v1', credentials=creds)
+        self.people = self.__service.people()
 
         ##
-        ## Log in
-        ##
-        self.gd_client = gdc.ContactsClient(source='dump-contacts-1')
-        auth2token.authorize(self.gd_client)
-
-        ##
-        ## Load all groups
+        ## Load all groups into a dictionary, indexed by resourceName
         ##
         self.__groups = dict()
-        query = gdc.ContactsQuery(max_results=MAX_RESULTS)
-        feed = self.gd_client.GetGroups(q=query)
-        if feed:
-            for entry in feed.entry:
-                self.__groups[entry.SyncGetTag()] = entry
+        contactGroups = self.__service.contactGroups()
+        req = contactGroups.list(groupFields=GROUP_FIELDS, pageSize=500)
+        while True:
+            resp = req.execute()
+            if not resp:
+                break
+
+            groups = resp.get('contactGroups', [])
+            for g in groups:
+                self.__groups[g['resourceName']] = g
+
+            req = contactGroups.list_next(req, resp)
+            if not req:
+                break
 
         ##
         ## Load all contacts
         ##
         self.__contacts = dict()
-        self.nouids = set([])
+        self.nouids = []
 
-        query = gdc.ContactsQuery(max_results=MAX_RESULTS)
-        feed = self.gd_client.GetContacts(q=query)
-        while feed:
-            for entry in feed.entry:
-                # Ignore contacts without names or not belonging to any group
-                if entry.group_membership_info and entry.GetPrintName():
-                    # Check that contact has one and only one UID.  The
-                    # test for multiple UIDs is in case Google's merge contacts
-                    # combines UIDs from multiple contacts.
-                    uid_obj = None
-                    num_uids_found = 0
-                    for obj in entry.extended_property:
-                        if obj.name == SYNC_ID_TAG:
-                            uid_obj = obj
-                            num_uids_found += 1;
+        req = self.people.connections().list(
+                resourceName='people/me',
+                pageSize=500,
+                sortOrder='FIRST_NAME_ASCENDING',
+                sources='READ_SOURCE_TYPE_CONTACT',
+                personFields=PERSON_FIELDS)
 
-                    if not uid_obj:
-                        # When syncing a new account for the first time we
-                        # don't want to create uid without first checking
-                        # duplicate names.  so just store these entries.
-                        if not createuid:
-                            self.nouids.add(entry)
-                            continue
+        while True:
+            resp = req.execute()
+            if not resp:
+                break
 
-                        uid = str(uuid.uuid1())
-                        uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
-                        entry.extended_property.append(uid_obj)
-                        if debug:
-                            print('Add UID {0} to "{1}" ({2})'.format(uid,
-	                                                              entry.GetPrintName(),
-	                                                              user))
-                        if enableUpdates:
-                            entry = self.gd_client.Update(entry)
+            connections = resp.get('connections', [])
+            for person in connections:
+                # Ignore contacts not belonging to any group
+                if not person.get('memberships', []):
+                    continue
+                # Ignore contacts without a name
+                if not ContactGetPrintName(person):
+                    continue
 
-                    if num_uids_found > 1:
-                        # Drop extra UIDs
-                        p = [obj for obj in entry.extended_property if obj.name != SYNC_ID_TAG]
-                        p.append(uid_obj)
-                        entry.extended_property = p
-                        if debug:
-                            print('Merge UIDs using {0} for "{1}" ({2})'.format(uid_obj.value,
-                                                                                entry.GetPrintName(),
-                                                                                user))
-                        if enableUpdates:
-                            entry = self.gd_client.Update(entry)
+                # Check that contact has one and only one UID.  The
+                # test for multiple UIDs is in case Google's merge contacts
+                # combines UIDs from multiple contacts.
+                uid_obj = None
+                num_uids_found = 0
+                for obj in person.get('clientData', []):
+                    if obj['key'] == SYNC_ID_TAG:
+                        uid_obj = obj
+                        num_uids_found += 1;
 
-                    self.__contacts[uid_obj.value] = entry
+                if not uid_obj:
+                    # When syncing a new account for the first time we
+                    # don't want to create uid without first checking
+                    # duplicate names.  so just store these entries.
+                    if not createuid:
+                        self.nouids.append(person)
+                        continue
 
-            # Done?
-            next_link = feed.GetNextLink()
-            if next_link:
-                feed = self.gd_client.GetContacts(uri=next_link.href)
-            else:
-                feed = None
+                    EntryAddUID(person, str(uuid.uuid1()))
+                    if debug:
+                        print('Add UID {0} to "{1}" ({2})'.format(uid_obj['value'],
+                                                                  ContactGetPrintName(person),
+                                                                  user))
 
+                    if enableUpdates:
+                        person = self.people.updateContact(
+                            resourceName = person['resourceName'],
+                            body = person,
+                            personFields = PERSON_FIELDS,
+                            sources='READ_SOURCE_TYPE_CONTACT',
+                            updatePersonFields = 'clientData').execute()
+
+                if num_uids_found > 1:
+                    # Drop extra UIDs
+                    d = [obj for obj in person['clientData'] if obj['key'] != SYNC_ID_TAG]
+                    d.append(uid_obj)
+                    person['clientData'] = d
+                    if debug:
+                        print('Merge UIDs using {0} for "{1}" ({2})'.format(uid_obj['value'],
+                                                                            ContactGetPrintName(person),
+                                                                            user))
+                    if enableUpdates:
+                        person = self.people.updateContact(
+                            resourceName = person['resourceName'],
+                            body = person,
+                            personFields = PERSON_FIELDS,
+                            sources='READ_SOURCE_TYPE_CONTACT',
+                            updatePersonFields = 'clientData').execute()
+
+                self.__contacts[uid_obj['value']] = person
+
+            req = self.people.connections().list_next(req, resp)
+            if not req:
+                break
 
     ##
     ## GetContact --
@@ -194,8 +227,12 @@ class UserContacts(object):
     ##
     def ContactAdd(self, entry):
         if enableUpdates:
-            entry = self.gd_client.CreateContact(entry)
-        self.__contacts[entry.SyncGetUID()] = entry
+             entry = self.people.createContact(
+                 body = entry,
+                 personFields = PERSON_FIELDS,
+                 sources='READ_SOURCE_TYPE_CONTACT').execute()
+
+        self.__contacts[ContactGetUID(entry)] = entry
         return entry
 
     ##
@@ -204,8 +241,18 @@ class UserContacts(object):
     ##
     def ContactUpdate(self, entry):
         if enableUpdates:
-            entry = self.gd_client.Update(entry)
-        self.__contacts[entry.SyncGetUID()] = entry
+             # Update the server. Impose a delay because the Google
+             # API will fail with too high a request rate.
+             time.sleep(1)
+
+             entry = self.people.updateContact(
+                 resourceName = entry['resourceName'],
+                 body = entry,
+                 personFields = PERSON_FIELDS,
+                 sources='READ_SOURCE_TYPE_CONTACT',
+                 updatePersonFields = PERSON_FIELDS_UPDATE).execute()
+
+        self.__contacts[ContactGetUID(entry)] = entry
         return entry
 
     ##
@@ -213,9 +260,10 @@ class UserContacts(object):
     ##     Delete a contact from the Google server
     ##
     def ContactDelete(self, entry):
-        del self.__contacts[entry.SyncGetUID()]
+        del self.__contacts[ContactGetUID(entry)]
         if enableUpdates:
-            return self.gd_client.Delete(entry)
+             entry = self.people.deleteContact(
+                 resourceName = entry['resourceName']).execute()
 
     ##
     ## ContactIterItems --
@@ -232,12 +280,21 @@ class UserContacts(object):
         return iter(self.__contacts.values())
 
     ##
-    ## GetGroup --
-    ##     Fetch a single group from local cache.
+    ## DumpContacts --
+    ##     Dump contact data and IDs.
     ##
-    def GetGroup(self, uid):
-        if uid in self.__groups:
-            return self.__groups[uid]
+    def DumpContacts(self):
+        for id, entry in self.__contacts.items():
+            print(' %s: %s' % (id, ContactDebugDump(entry)))
+
+    ##
+    ## GetGroup --
+    ##     Fetch a single group from local cache. Groups are indexed by
+    ##     resource name.
+    ##
+    def GetGroup(self, rsrc_name):
+        if rsrc_name in self.__groups:
+            return self.__groups[rsrc_name]
         else:
             return None
 
@@ -245,53 +302,70 @@ class UserContacts(object):
     ## GroupChangeID --
     ##     Change the ID of a group
     ##
-    def GroupChangeID(self, oldID, newID):
-        entry = self.__groups[oldID]
-        if entry.system_group:
+    def GroupChangeID(self, rsrc_name, newID):
+        group = self.__groups[rsrc_name]
+        if GroupIsSystemGroup(group):
             sys.exit("Illegal attempt to change a system group ID")
 
-        # Update the groups dictionary
-        del self.__groups[oldID]
-        self.__groups[newID] = entry
-
         # Update the SYNC_ID_TAG in extended properties
-        ext = [obj for obj in entry.extended_property if obj.name != SYNC_ID_TAG]
-        ext.append(gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = newID))
-        entry.extended_property = ext
+        d = [obj for obj in group['clientData'] if obj['key'] != SYNC_ID_TAG]
+        uid_obj = dict()
+        uid_obj['key'] = SYNC_ID_TAG
+        uid_obj['value'] = newID
+        d.append(uid_obj)
+        group['clientData'] = d
 
         if enableUpdates:
-            self.__groups[newID] = self.gd_client.Update(entry)
+            self.__groups[rsrc_name] = \
+                self.__service.contactGroups().update(group['resourceName'],
+                                                      body=group,
+                                                      readGroupFields=GROUP_FIELDS,
+                                                      updateGroupFields='clientData').execute()
 
     ##
     ## GroupRename --
     ##     Change the name of a group
     ##
-    def GroupRename(self, uid, newName):
-        entry = self.__groups[uid]
-        if entry.system_group:
+    def GroupRename(self, rsrc_name, newName):
+        group = self.__groups[rsrc_name]
+        if GroupIsSystemGroup(group):
             sys.exit("Illegal attempt to change a system group ID")
 
-        entry.title = atom.data.Title(text = newName)
+        group['name'] = newName
 
         # Update the groups dictionary
-        self.__groups[uid] = entry
+        self.__groups[rsrc_name] = group
 
         if enableUpdates:
-            self.__groups[uid] = self.gd_client.Update(entry)
+            self.__groups[rsrc_name] = \
+                self.__service.contactGroups().update(group['resourceName'],
+                                                      body=group,
+                                                      readGroupFields=GROUP_FIELDS,
+                                                      updateGroupFields='name').execute()
 
     ##
     ## GroupAdd --
     ##     Add a new group on the Google server
     ##
     def GroupAdd(self, uid, name):
-        entry = gdata.contacts.data.GroupEntry(title = atom.data.Title(text = name))
-        entry.extended_property.append(gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid))
+        group = dict()
+        group['name'] = name
+        EntryAddUID(group, uid)
 
-        # Update the groups dictionary
-        self.__groups[uid] = entry
+        if not enableUpdates:
+            self.__groups[uid] = group
+        else:
+            group = self.__service.contactGroups().create(
+                body={'contactGroup': group,
+                      'readGroupFields': GROUP_FIELDS}).execute()
+            self.__groups[group['resourceName']] = group
 
-        if enableUpdates:
-            self.__groups[uid] = self.gd_client.CreateGroup(entry)
+    ##
+    ## GroupIterItems --
+    ##     Group iterator
+    ##
+    def GroupIterItems(self):
+        return iter(self.__groups.items())
 
     ##
     ## GroupIterValues --
@@ -301,12 +375,32 @@ class UserContacts(object):
         return iter(self.__groups.values())
 
     ##
+    ## InitGroupByUID --
+    ##     Once groups have UIDs, following MergeGroups(), build a map from UID
+    ##     to group.
+    ##
+    def InitGroupByUID(self):
+        self.__groups_by_uid = dict()
+        for grp in self.GroupIterValues():
+            self.__groups_by_uid[GroupGetUID(grp)] = grp
+
+    ##
+    ## GetGroupByUID --
+    ##     Lookup a group from its UID. InitGroupByUID() must be run first.
+    ##
+    def GetGroupByUID(self, uid):
+        if uid in self.__groups_by_uid:
+            return self.__groups_by_uid[uid]
+        else:
+            return None
+
+    ##
     ## DumpGroups --
     ##     Dump group data and IDs.
     ##
     def DumpGroups(self):
-        for id, entry in self.__groups.items():
-            print(' %s: %s' % (id, entry.DebugDump()))
+        for id, grp in self.__groups.items():
+            print(' %s: %s' % (id, GroupDebugDump(grp)))
 
 
 ##
@@ -315,194 +409,209 @@ class UserContacts(object):
 def AddUids(contacts):
 
     # map name to (uid, account email address) for all accounts
-    name2uid = dict([(ContactGetPrintName(entry), (uid, c.email)) for c in contacts for uid, entry in c.ContactIterItems()])
+    name2uid = dict([(ContactGetPrintName(person), (uid, c.user)) for c in contacts for uid, person in c.ContactIterItems()])
 
     for c in contacts:
         for e in c.nouids:
             # use already existing uid if possible
-            if ContactGetPrintName(e) in name2uid:
-                (uid, email) = name2uid[ContactGetPrintName(e)]
+            print_name = ContactGetPrintName(e)
+            if print_name in name2uid:
+                (uid, user) = name2uid[print_name]
                 if debug: print('Add UID {0} to "{1}" ({2}) from pre-existing user in account {3}'.format(
-	                        uid, e.GetPrintName(), c.email, email))
+                            uid, print_name, c.user, user))
             else:
                 uid = str(uuid.uuid1())
-                if debug: print('Add UID {0} to "{1}" ({2})'.format(uid, e.GetPrintName(), c.email))
+                if debug: print('Add UID {0} to "{1}" ({2})'.format(uid, print_name, c.user))
 
-            uid_obj = gdata.data.ExtendedProperty(name = SYNC_ID_TAG, value = uid)
-            e.extended_property.append(uid_obj)
-            if enableUpdates:
-                e = c.gd_client.Update(e)
+            EntryAddUID(e, uid)
+            e = c.people.updateContact(
+                resourceName = e['resourceName'],
+                body = e,
+                personFields = PERSON_FIELDS,
+                sources='READ_SOURCE_TYPE_CONTACT',
+                updatePersonFields = 'clientData').execute()
 
 
 ################################################################################
 #
-# Extend Contacts class
+# Operations on either contacts or groups
 #
 ################################################################################
 
 ##
-## SyncGetUID class extension --
-##     Return the UID of a contact or None if it doesn't have one.
+## Return the UID of a contact/group or None if it doesn't have one.
 ##
-def ContactGetUID(self):
-    for obj in self.extended_property:
-        if obj.name == SYNC_ID_TAG:
-            return obj.value
+def EntryGetUID(entry):
+    client_data = entry.get('clientData', [])
+    for obj in client_data:
+        if obj['key'] == SYNC_ID_TAG:
+            return obj['value']
     return None
 
-gdata.contacts.data.ContactEntry.SyncGetUID = ContactGetUID
+
+def EntryAddUID(entry, uid):
+    uid_obj = dict()
+    uid_obj['key'] = SYNC_ID_TAG
+    uid_obj['value'] = uid
+
+    if 'clientData' in entry:
+        entry['clientData'].append(uid_obj)
+    else:
+        entry['clientData'] = [uid_obj]
 
 
+################################################################################
+#
+# Operations on contacts
+#
+################################################################################
+
 ##
-## GetPrintName class extension --
-##     Return the printable name of a contact
+## Return the printable name of a contact
 ##
-def ContactGetPrintName(self):
-    entry = self
-    if entry.name and entry.name.full_name:
-        return entry.name.full_name.text
-    if entry.organization and entry.organization.name:
-        return entry.organization.name.text
+def ContactGetPrintName(person):
+    if ('names' in person) and ('displayName' in person['names'][0]):
+        return person['names'][0]['displayName']
+    if ('organizations' in person) and ('name' in person['organizations'][0]):
+        return person['organizations'][0]['name']
     return None
 
-gdata.contacts.data.ContactEntry.GetPrintName = ContactGetPrintName
+
+def ContactGetUID(person):
+    return EntryGetUID(person)
 
 
-def ContactDebugDump(self):
-    entry = self
+def ContactGetUpdateTime(person):
+    upd_time = ''
+    if ('metadata' in person):
+        for src in person['metadata'].get('sources', []):
+            if src['updateTime'] > upd_time:
+                upd_time = src['updateTime']
+    return upd_time
 
-    r = entry.GetPrintName() + ':\n'
 
-    r += '  Updated: %s\n' % (entry.updated.text)
+def ContactDebugDump(person):
+    r = ContactGetPrintName(person) + ':\n'
 
-    r += '  ID: %s\n' % (entry.id.text)
-    r += '  ETag: %s\n' % (entry.etag)
+    if ('metadata' in person) and ('sources' in person['metadata']):
+        for src in person['metadata']['sources']:
+            r += '  Updated: %s\n' % (src['updateTime'])
+            r += '  Source Type: %s\n' % (src['type'])
 
-    for g in entry.group_membership_info:
-        r += '  Group: %s\n' % (g.href)
+    r += '  Resource name: %s\n' % (person['resourceName'])
+    r += '  ETag: %s\n' % (person.get('etag', ''))
 
-    for cal in entry.calendar_link:
-        r += '  Calendar: %s (%s)\n' % (cal.href, cal.label)
+    for e in person.get('memberships', []):
+        if 'contactGroupMembership' in e:
+            r += '  Group: %s\n' % (e['contactGroupMembership']['contactGroupResourceName'])
 
-    for obj in entry.external_id:
-        r += '  External ID: %s (%s)\n' % (obj.value, obj.label)
+    for e in person.get('calendarUrls', []):
+        r += '  Calendar: %s (%s)\n' % (e['url'], e['type'])
 
-    r += '  Initials: %s\n' % (entry.initals)
+    for e in person.get('externalIds', []):
+        r += '  External ID: %s (%s)\n' % (e['value'], e['type'])
 
-    for rel in entry.relation:
-        r += '  Relation: %s (%s)\n' % (rel.text, rel.rel)
+    for e in person.get('relations', []):
+        r += '  Relation: %s (%s)\n' % (e['person'], e['type'])
 
-    for obj in entry.user_defined_field:
-        r += '  User Defined: %s (%s)\n' % (obj.value, obj.key)
+    for e in person.get('userDefined', []):
+        r += '  User Defined: %s (%s)\n' % (e['value'], e['key'])
 
-    for website in entry.website:
-        rel = re.sub('.*#', '', website.rel)
-        r += '  Website: %s (%s)\n' % (website.href, rel)
+    for e in person.get('urls', []):
+        r += '  Website: %s (%s)\n' % (e['value'], e['type'])
 
-    ## Phone
-    for phone in entry.phone_number:
-        p = phone.text
-        if p.isdigit():
-            if len(p) == 10:
-                p = '(' + p[0:3] + ') ' + p[3:6] + '-' + p[6:]
-            elif len(p) == 11:
-                p = p[0] + ' (' + p[1:4] + ') ' + p[4:7] + '-' + p[7:]
-        r += '  Phone: %s (%s)\n' % (p, re.sub('.*#', '', phone.rel))
+    for e in person.get('phoneNumbers', []):
+        r += '  Phone: %s (%s)\n' % (e['value'], e['type'])
 
-    if entry.organization:
-        r += '  Org name: \n' + entry.organization.name.text
+    for e in person.get('emailAddress', []):
+        r += '  Phone: %s (%s)\n' % (e['value'], e['type'])
 
-    for obj in entry.email:
-        rel = re.sub('.*#', '', obj.rel)
-        r += '  E-mail: %s (%s)\n' % (obj.address, rel)
+    for e in person.get('organizations', []):
+        if 'name' in e:
+            org_name = e['name']
+        else:
+            org_name = 'NO NAME'
+        r += '  Org name: %s\n' % (org_name)
 
-    for obj in entry.im:
-        rel = re.sub('.*#', '', obj.rel)
-        r += '  IM: %s (%s)\n' % (obj.address, rel)
+    for e in person.get('imClients', []):
+        r += '  IM: %s at %s (%s)\n' % (e['username'], e['protocol'], e['type'])
 
-    ## Address
-    for postal_address in entry.structured_postal_address:
-        if postal_address.formatted_address:
-            ## Drop trailing whitespace
-            addr = postal_address.formatted_address.text.rstrip('\n ')
-            ## Move ZIP up
-            addr = re.sub('\n([0-9]+)$', r'  \1', addr)
-            ## Indent
-            addr = re.sub('\n', '\n        ', addr)
+    for e in person.get('addresses', []):
+        ## Drop trailing whitespace
+        addr = e['formattedValue'].rstrip('\n ')
+        ## Move ZIP up
+        addr = re.sub('\n([0-9]+)$', r'  \1', addr)
+        ## Indent
+        addr = re.sub('\n', '\n      ', addr)
+        r += '  Addr (%s):\n      %s\n' % (e['type'], addr)
 
-            r += '  Addr: %s\n' % (addr)
-
-    r += '  Photo link: %s\n' % (entry.GetPhotoLink().href)
-    if entry.GetPhotoEditLink():
-        r += '  Photo edit link: %s\n' % (entry.GetPhotoEditLink().text)
-
-    for obj in entry.extended_property:
-        r += '  Extended Property: %s (%s)\n' % (obj.value, obj.name)
+    for e in person.get('photos', []):
+        r += '  Photo: %s\n' % (e['url'])
 
     return r
 
-gdata.contacts.data.ContactEntry.DebugDump = ContactDebugDump
-
 
 ################################################################################
 #
-# Extend GROUP class
+# Operations on groups
 #
 ################################################################################
 
+def GroupIsSystemGroup(group):
+    return ('groupType' in group) and (group['groupType'] == 'SYSTEM_CONTACT_GROUP')
+
 ##
-## SyncGetUID class extension --
-##     Return the UID of a group or None if it doesn't have one.
+## Return the UID of a group or None if it doesn't have one.
 ##
-def GroupGetUID(self):
+def GroupGetUID(group):
     # System group?  Use the system ID.
-    if self.system_group:
-        return self.system_group.id
+    if GroupIsSystemGroup(group):
+        return group['resourceName']
     else:
-        # Has group already been tagged with a UID
-        for obj in self.extended_property:
-            if obj.name == SYNC_ID_TAG:
-                return obj.value
-    return None
-
-gdata.contacts.data.GroupEntry.SyncGetUID = GroupGetUID
+        return EntryGetUID(group)
 
 
 ##
-## SyncGetTag class extension --
-##     Return some unique tag for a group.  If a UID exists, use that.  If
-##     not, use the group name.  Later program phases will guarantee all
-##     groups have UIDs.
+## Return some unique tag for a group.  If a UID exists, use that.  If
+## not, use the group name.  Later program phases will guarantee all
+## groups have UIDs.
 ##
-def GroupGetTag(self):
-    tag = self.SyncGetUID()
+def GroupGetTag(group):
+    tag = GroupGetUID(group)
     if not tag:
-        tag = self.title.text
+        tag = group['resourceName']
     return tag
 
-gdata.contacts.data.GroupEntry.SyncGetTag = GroupGetTag
+
+##
+## Return updated time or empty string if not set. System groups may not
+## have update times.
+##
+def GroupGetUpdateTime(group):
+    if ('metadata' in group) and ('updateTime' in group['metadata']):
+        return group['metadata']['updateTime']
+    else:
+        return ''
 
 
-def GroupDebugDump(self):
-    entry = self
+def GroupDebugDump(group):
+    r = group['name'] + '\n'
 
-    r = entry.title.text + ':\n'
+    upd = GroupGetUpdateTime(group)
+    if upd:
+        r += '  Updated: %s\n' % (upd)
 
-    if entry.updated:
-        r += '  Updated: %s\n' % (entry.updated.text)
+    if GroupIsSystemGroup(group):
+        r += '  System Group: %s\n' % (group['resourceName'])
+    else:
+        r += '  Group: %s\n' % (group['resourceName'])
 
-    if entry.system_group:
-        r += '  System Group: %s\n' % (entry.system_group.id)
-
-    for obj in entry.extended_property:
-        r += '  Extended Property: %s (%s)\n' % (obj.value, obj.name)
-
-    if entry.id:
-        r += '  ID: %s' % (entry.id.text)
+    if 'clientData' in group:
+        for obj in group['clientData']:
+            if obj['key'] == SYNC_ID_TAG:
+                r += '  ID: %s\n' % (obj['value'])
 
     return r
-
-gdata.contacts.data.GroupEntry.DebugDump = GroupDebugDump
 
 
 ################################################################################
@@ -518,22 +627,23 @@ def MergeGroups(users, contacts):
     all_groups_by_uid = dict()
     for i in range(len(users)):
         for grp in contacts[i].GroupIterValues():
-            uid = grp.SyncGetUID()
-            if uid and ((not uid in all_groups_by_uid) or (grp.updated.text > all_groups_by_uid[uid]['updated'])):
+            uid = GroupGetUID(grp)
+            upd_time = GroupGetUpdateTime(grp)
+            if uid and ((not uid in all_groups_by_uid) or (upd_time > all_groups_by_uid[uid]['updated'])):
                 # First time UID is seen or this instance was updated more
                 # recently.
-                all_groups_by_uid[uid] = { 'name': grp.title.text,
-                                           'updated': grp.updated.text }
+                all_groups_by_uid[uid] = { 'name': grp['name'],
+                                           'updated': upd_time }
 
     ##
     ## Have any groups changed names?
     ##
     for i in range(len(users)):
-        for grp in contacts[i].GroupIterValues():
-            uid = grp.SyncGetUID()
-            if uid and (grp.title.text != all_groups_by_uid[uid]['name']):
-                print('Group: renaming from %s to %s (%s)' % (grp.title.text, all_groups_by_uid[uid]['name'], users[i]))
-                contacts[i].GroupRename(uid, all_groups_by_uid[uid]['name'])
+        for rsrc_name, grp in contacts[i].GroupIterItems():
+            uid = GroupGetUID(grp)
+            if uid and (grp['name'] != all_groups_by_uid[uid]['name']):
+                print('Group: renaming from %s to %s (%s)' % (grp['name'], all_groups_by_uid[uid]['name'], users[i]))
+                contacts[i].GroupRename(rsrc_name, all_groups_by_uid[uid]['name'])
 
     ##
     ## Build an inverse index from name to uid
@@ -549,7 +659,7 @@ def MergeGroups(users, contacts):
     all_groups_by_name = dict()
     for i in range(len(users)):
         for grp in contacts[i].GroupIterValues():
-            name = grp.title.text
+            name = grp['name']
 
             # First time name is seen?  Initialize a list across all users.
             if not name in all_groups_by_name:
@@ -569,22 +679,24 @@ def MergeGroups(users, contacts):
 
         for i in range(len(users)):
             if all_groups_by_name[name][i]:
-                old_tag = all_groups_by_name[name][i].SyncGetTag()
-                if old_tag != uid:
+                old_uid = GroupGetUID(all_groups_by_name[name][i])
+                if old_uid != uid:
                     print('Group: setting %s (%s) to UID %s' % (name, users[i], uid))
-                    contacts[i].GroupChangeID(old_tag, uid)
+                    contacts[i].GroupChangeID(all_groups_by_name[name][i]['resourceName'], uid)
             else:
                 print('Group: adding %s (%s) with UID %s' % (name, users[i], uid))
                 contacts[i].GroupAdd(uid, name)
     
+    # Build the map from group UID to group for each user
+    for i in range(len(users)):
+        contacts[i].InitGroupByUID()
+
 
 ################################################################################
 #
 # Combine contacts from multiple accounts
 #
 ################################################################################
-
-groupIDtoGroup = dict()
 
 ##
 ## MergeContacts --
@@ -600,55 +712,49 @@ def MergeContacts(users, contacts, pvtGroups):
     prev_state = [LoadPrevContactState(users[i]) for i in range(len(users))]
 
     ##
-    ## Build a map from group HREF ID to group UID
-    ##
-    for i in range(len(users)):
-        for grp in contacts[i].GroupIterValues():
-            if grp.id:
-                groupIDtoGroup[grp.id.text] = grp
-
-    ##
     ## Find all modified contacts and replicate them
     ##
     for i in range(len(users)):
-        for key, entry in contacts[i].ContactIterItems():
+        for uid, person in contacts[i].ContactIterItems():
             # Was the contact modified since the last sync?
-            name = entry.GetPrintName()
-            if not key in prev_state[i]:
+            name = ContactGetPrintName(person)
+            if not uid in prev_state[i]:
                 print("Contact: \"{0}\" ({1}) is new".format(name, users[i]))
                 modified = True
-            elif entry.updated.text != prev_state[i][key]['updated']:
+            elif ContactGetUpdateTime(person) > prev_state[i][uid]['updated']:
                 print("Contact: \"{0}\" ({1}) is modified".format(name, users[i]))
                 modified = True
                 if debug:
-                    print('  Old: date %s, etag %s' % (prev_state[i][key]['updated'], prev_state[i][key]['etag']))
-                    print('  New: date %s, etag %s' % (entry.updated.text, entry.etag))
+                    print('  UID: %s' % (uid))
+                    print('  Old: date %s' % (prev_state[i][uid]['updated']))
+                    print('  New: date %s' % (ContactGetUpdateTime(person)))
             else:
                 modified = False
 
             # Is this contact private?
             is_private = False
-            for grp in entry.group_membership_info:
-                if grp.href in pvtGroups:
-                    is_private = True
-                    break
+            for grp in person.get('memberships', []):
+                if 'contactGroupMembership' in grp:
+                    if grp['contactGroupMembership']['contactGroupResourceName'] in pvtGroups:
+                        is_private = True
+                        break
 
             for j in range(len(users)):
                 if j != i:
-                    c = contacts[j].GetContact(key)
+                    c = contacts[j].GetContact(uid)
                     if c:
                         if is_private:
                             print("Contact: delete \"{0}\" ({1}) marked private by {2}".format(name, users[j], users[i]))
                             contacts[j].ContactDelete(c)
-                            del prev_state[j][key]
+                            del prev_state[j][uid]
                         elif modified:
                             print("Contact: update \"{0}\" ({1})".format(name, users[j]))
-                            new_entry = UpdateContactInUser(contacts[j], entry)
-                            prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
-                    elif not is_private and (modified or not key in prev_state[j]):
+                            new_person = UpdateContactInUser(contacts[j], contacts[i], person, c)
+                            prev_state[j][uid] = {'updated': ContactGetUpdateTime(new_person)}
+                    elif not is_private and (modified or not uid in prev_state[j]):
                         print("Contact: add \"{0}\" ({1})".format(name, users[j]))
-                        new_entry = AddContactToUser(contacts[j], entry)
-                        prev_state[j][key] = {'updated': new_entry.updated.text, 'etag': new_entry.etag}
+                        new_person = AddContactToUser(contacts[j], contacts[i], person)
+                        prev_state[j][uid] = {'updated': ContactGetUpdateTime(new_person)}
 
     ##
     ## Look for contacts deleted by any user and delete them in all users
@@ -659,7 +765,7 @@ def MergeContacts(users, contacts, pvtGroups):
                 for j in range(len(users)):
                     c = contacts[j].GetContact(uid)
                     if c:
-                        name = c.GetPrintName()
+                        name = ContactGetPrintName(c)
                         print("Contact: delete \"{0}\" ({1}) deleted by {2}".format(name, users[j], users[i]))
                         contacts[j].ContactDelete(c)
 
@@ -668,8 +774,8 @@ def MergeContacts(users, contacts, pvtGroups):
     ##
     for i in range(len(users)):
         state = dict()
-        for key, entry in contacts[i].ContactIterItems():
-            state[key] = {'updated': entry.updated.text, 'etag': entry.etag}
+        for uid, person in contacts[i].ContactIterItems():
+            state[uid] = {'updated': ContactGetUpdateTime(person)}
 
         if enableUpdates:
             SaveContactState(users[i], state)
@@ -679,51 +785,83 @@ def MergeContacts(users, contacts, pvtGroups):
 ## AddContactToUser --
 ##     Take an entry from one user and add it to another user's contact list.
 ##
-def AddContactToUser(contacts, srcEntry):
+def AddContactToUser(contacts_tgt, contacts_src, src_person):
     # Make a copy so the original isn't modified
-    entry = copy.copy(srcEntry)
+    entry = copy.copy(src_person)
 
     # Update the group membership to the target user's equivalent groups
-    entry.group_membership_info = []
-    for grp in srcEntry.group_membership_info:
-        new_grp = contacts.GetGroup(groupIDtoGroup[grp.href].SyncGetUID())
-        if new_grp.id:
-            entry.group_membership_info.append(gdata.contacts.data.GroupMembershipInfo(href = new_grp.id.text))
+    MapContactGroupsToUser(contacts_tgt, contacts_src, entry, src_person)
 
-    # Drop ID and ETag that belonged to the original user's copy
-    entry.id = None
-    entry.etag = None
-    entry.link = None
+    ContactDropSourceIdFields(entry)
+
+    # Drop system-generated tags
+    drop_keys = ['resourceName', 'etag', 'photos']
+    for dk in drop_keys:
+        if dk in entry:
+            del entry[dk]
 
     # Add the new contact
-    return contacts.ContactAdd(entry)
+    return contacts_tgt.ContactAdd(entry)
 
 ##
 ## UpdateContactInUser --
 ##     Take an entry from one user and update another user's existing equivalent
 ##     entry.
 ##
-def UpdateContactInUser(contacts, srcEntry):
+def UpdateContactInUser(contacts_tgt, contacts_src, src_person, prev_person):
     # Make a copy so the original isn't modified
-    entry = copy.copy(srcEntry)
-
-    # Get the current entry
-    cur_entry = contacts.GetContact(srcEntry.SyncGetUID())
+    entry = copy.copy(src_person)
 
     # Update the group membership to the target user's equivalent groups
-    entry.group_membership_info = []
-    for grp in srcEntry.group_membership_info:
-        new_grp = contacts.GetGroup(groupIDtoGroup[grp.href].SyncGetUID())
-        if new_grp.id:
-            entry.group_membership_info.append(gdata.contacts.data.GroupMembershipInfo(href = new_grp.id.text))
+    MapContactGroupsToUser(contacts_tgt, contacts_src, entry, src_person)
 
-    # Use the ID and ETag from the current entry
-    entry.id = cur_entry.id
-    entry.etag = cur_entry.etag
-    entry.link = cur_entry.link
+    ContactDropSourceIdFields(entry)
 
-    # Update the server
-    return contacts.ContactUpdate(entry)
+    # Drop system-generated tags
+    drop_keys = ['resourceName', 'etag', 'photos']
+    for dk in drop_keys:
+        if dk in entry:
+            del entry[dk]
+
+    # Use the original resource name
+    entry['resourceName'] = prev_person['resourceName']
+    entry['etag'] = prev_person['etag']
+
+    return contacts_tgt.ContactUpdate(entry)
+
+
+##
+## MapContactGroupsToUser --
+##     Map the groups associated with src_person to tgt_person, where tgt_person
+##     is owned by a different account. The target account uses different resource
+##     names for the equivalent groups.
+##
+def MapContactGroupsToUser(contacts_tgt, contacts_src, tgt_person, src_person):
+    tgt_person['memberships'] = []
+    for grp in src_person.get('memberships', []):
+        src_rsrc = grp.get('contactGroupMembership', {}).get('contactGroupResourceName', {})
+        if src_rsrc:
+            src_grp = contacts_src.GetGroup(src_rsrc)
+            new_grp = contacts_tgt.GetGroupByUID(GroupGetUID(src_grp))
+            if new_grp:
+                rsrc = new_grp['resourceName']
+                id = re.sub('^[^/]*/', '', rsrc)
+                tgt_person['memberships'].append({'contactGroupMembership':
+                                                  {'contactGroupId': id,
+                                                   'contactGroupResourceName': rsrc}})
+
+##
+## ContactDropSourceIdFields --
+##     When submitting an update, no fields with external sources are
+##     permitted. Drop them from a person entry.
+##
+def ContactDropSourceIdFields(person):
+    for key in list(person):
+        list_entry = person[key]
+        if isinstance(list_entry, list):
+            for entry in list_entry:
+                if ('metadata' in entry) and ('source' in entry['metadata']):
+                    del entry['metadata']['source']
 
 
 ##
@@ -805,8 +943,8 @@ def main():
                 contacts.append(UserContacts(users[i],
                                              flags = flags,
                                              createuid = False))
-            except:
-                print('Invalid user credentials given for user %s.' % (users[i]))
+            except Exception as e:
+                print('Error loading contacts for user %s: %s' % (users[i], e))
                 sys.exit(1)
         AddUids(contacts)
 
@@ -817,8 +955,8 @@ def main():
     for i in range(len(users)):
         try:
             contacts.append(UserContacts(users[i], flags = flags))
-        except:
-            print('Invalid user credentials given for user %s.' % (users[i]))
+        except Exception as e:
+            print('Error loading contacts for user %s: %s' % (users[i], e))
             sys.exit(1)
 
     ## Merge groups across all users
@@ -827,9 +965,9 @@ def main():
     ## Compute the set of all private groups (indexed by HREF)
     pvt_groups = set()
     for i in range(len(users)):
-        for grp in contacts[i].GroupIterValues():
-            if grp.title.text in pvt_grp_names and grp.id:
-                pvt_groups.add(grp.id.text)
+        for rsrc_name, grp in contacts[i].GroupIterItems():
+            if grp['name'] in pvt_grp_names:
+                pvt_groups.add(rsrc_name)
 
     ## Merge contacts across all users
     MergeContacts(users, contacts, pvt_groups)
