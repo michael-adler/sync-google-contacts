@@ -174,7 +174,7 @@ class UserContacts(object):
                         self.nouids.append(person)
                         continue
 
-                    EntryAddUID(person, str(uuid.uuid1()))
+                    uid_obj = EntryAddUID(person, str(uuid.uuid1()))
                     if debug:
                         print('Add UID {0} to "{1}" ({2})'.format(uid_obj['value'],
                                                                   ContactGetPrintName(person),
@@ -458,6 +458,8 @@ def EntryAddUID(entry, uid):
         entry['clientData'].append(uid_obj)
     else:
         entry['clientData'] = [uid_obj]
+
+    return uid_obj
 
 
 ################################################################################
@@ -939,13 +941,9 @@ def main():
     if flags.adding_new_account:
         contacts = []
         for i in range(len(users)):
-            try:
-                contacts.append(UserContacts(users[i],
-                                             flags = flags,
-                                             createuid = False))
-            except Exception as e:
-                print('Error loading contacts for user %s: %s' % (users[i], e))
-                sys.exit(1)
+            contacts.append(UserContacts(users[i],
+                                         flags = flags,
+                                         createuid = False))
         AddUids(contacts)
 
     ##
@@ -953,11 +951,7 @@ def main():
     ##
     contacts = []
     for i in range(len(users)):
-        try:
-            contacts.append(UserContacts(users[i], flags = flags))
-        except Exception as e:
-            print('Error loading contacts for user %s: %s' % (users[i], e))
-            sys.exit(1)
+        contacts.append(UserContacts(users[i], flags = flags))
 
     ## Merge groups across all users
     MergeGroups(users, contacts)
