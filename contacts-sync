@@ -308,7 +308,7 @@ class UserContacts(object):
             sys.exit("Illegal attempt to change a system group ID")
 
         # Update the SYNC_ID_TAG in extended properties
-        d = [obj for obj in group['clientData'] if obj['key'] != SYNC_ID_TAG]
+        d = [obj for obj in group.get('clientData', []) if obj['key'] != SYNC_ID_TAG]
         uid_obj = dict()
         uid_obj['key'] = SYNC_ID_TAG
         uid_obj['value'] = newID
@@ -316,11 +316,13 @@ class UserContacts(object):
         group['clientData'] = d
 
         if enableUpdates:
+            upd = dict()
+            upd['contactGroup'] = group
+            upd['readGroupFields'] = GROUP_FIELDS
+            upd['updateGroupFields'] = 'clientData'
             self.__groups[rsrc_name] = \
-                self.__service.contactGroups().update(group['resourceName'],
-                                                      body=group,
-                                                      readGroupFields=GROUP_FIELDS,
-                                                      updateGroupFields='clientData').execute()
+                self.__service.contactGroups().update(resourceName = group['resourceName'],
+                                                      body = upd).execute()
 
     ##
     ## GroupRename --
@@ -337,11 +339,13 @@ class UserContacts(object):
         self.__groups[rsrc_name] = group
 
         if enableUpdates:
+            upd = dict()
+            upd['contactGroup'] = group
+            upd['readGroupFields'] = GROUP_FIELDS
+            upd['updateGroupFields'] = 'name'
             self.__groups[rsrc_name] = \
-                self.__service.contactGroups().update(group['resourceName'],
-                                                      body=group,
-                                                      readGroupFields=GROUP_FIELDS,
-                                                      updateGroupFields='name').execute()
+                self.__service.contactGroups().update(resourceName = group['resourceName'],
+                                                      body = upd).execute()
 
     ##
     ## GroupAdd --
