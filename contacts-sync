@@ -25,12 +25,14 @@ __version__ = "0.2"
 ##
 
 import argparse
+import datetime
 import os
 import sys
 import re
 import uuid
 import copy
 import pickle
+import textwrap
 import time
 
 from googleapiclient.discovery import build
@@ -53,7 +55,7 @@ PERSON_FIELDS_UPDATE = 'addresses,biographies,birthdays,clientData,emailAddresse
 GROUP_FIELDS = 'metadata,groupType,memberCount,name,clientData'
 
 enableUpdates = True
-debug = False
+debug = 0
 
 ################################################################################
 #
@@ -496,15 +498,15 @@ def ContactGetUpdateTime(person):
     return upd_time
 
 
-def ContactDebugDump(person):
-    r = ContactGetPrintName(person) + ':\n'
+def ContactDebugDump(person, meta_str = ''):
+    r = ContactGetPrintName(person) + meta_str + ':\n'
 
     if ('metadata' in person) and ('sources' in person['metadata']):
         for src in person['metadata']['sources']:
             r += '  Updated: %s\n' % (src['updateTime'])
             r += '  Source Type: %s\n' % (src['type'])
 
-    r += '  Resource name: %s\n' % (person['resourceName'])
+    r += '  Resource name: %s\n' % (person.get('resourceName', ''))
     r += '  ETag: %s\n' % (person.get('etag', ''))
 
     for e in person.get('memberships', []):
@@ -512,25 +514,25 @@ def ContactDebugDump(person):
             r += '  Group: %s\n' % (e['contactGroupMembership']['contactGroupResourceName'])
 
     for e in person.get('calendarUrls', []):
-        r += '  Calendar: %s (%s)\n' % (e['url'], e['type'])
+        r += '  Calendar: %s (%s)\n' % (e['url'], e.get('type', '[undefined]'))
 
     for e in person.get('externalIds', []):
-        r += '  External ID: %s (%s)\n' % (e['value'], e['type'])
+        r += '  External ID: %s (%s)\n' % (e['value'], e.get('type', '[undefined]'))
 
     for e in person.get('relations', []):
-        r += '  Relation: %s (%s)\n' % (e['person'], e['type'])
+        r += '  Relation: %s (%s)\n' % (e['person'], e.get('type', '[undefined]'))
 
     for e in person.get('userDefined', []):
         r += '  User Defined: %s (%s)\n' % (e['value'], e['key'])
 
     for e in person.get('urls', []):
-        r += '  Website: %s (%s)\n' % (e['value'], e['type'])
+        r += '  Website: %s (%s)\n' % (e['value'], e.get('type', '[undefined]'))
 
     for e in person.get('phoneNumbers', []):
-        r += '  Phone: %s (%s)\n' % (e['value'], e['type'])
+        r += '  Phone: %s (%s)\n' % (e['value'], e.get('type', '[undefined]'))
 
-    for e in person.get('emailAddress', []):
-        r += '  Phone: %s (%s)\n' % (e['value'], e['type'])
+    for e in person.get('emailAddresses', []):
+        r += '  Email: %s (%s)\n' % (e['value'], e.get('type', '[undefined]'))
 
     for e in person.get('organizations', []):
         if 'name' in e:
@@ -540,16 +542,20 @@ def ContactDebugDump(person):
         r += '  Org name: %s\n' % (org_name)
 
     for e in person.get('imClients', []):
-        r += '  IM: %s at %s (%s)\n' % (e['username'], e['protocol'], e['type'])
+        r += '  IM: %s at %s (%s)\n' % (e['username'], e['protocol'], e.get('type', '[undefined]'))
 
     for e in person.get('addresses', []):
-        ## Drop trailing whitespace
-        addr = e['formattedValue'].rstrip('\n ')
+        addr = ''
+        if 'formattedValue' in e:
+            addr = e['formattedValue'].rstrip('\n ')
         ## Move ZIP up
         addr = re.sub('\n([0-9]+)$', r'  \1', addr)
         ## Indent
         addr = re.sub('\n', '\n      ', addr)
-        r += '  Addr (%s):\n      %s\n' % (e['type'], addr)
+        r += '  Addr (%s):\n      %s\n' % (e.get('type', '[undefined]'), addr)
+        for key, value in e.items():
+            if key != 'formattedValue':
+                r += '    %s: %s\n' % (key, value)
 
     for e in person.get('photos', []):
         r += '  Photo: %s\n' % (e['url'])
@@ -704,6 +710,35 @@ def MergeGroups(users, contacts):
 #
 ################################################################################
 
+def make_safe_filename(s):
+    # Remove invalid characters (e.g., / \ : * ? " < > |)
+    s = re.sub(r'[<>:"/\\|?*]', '', s)
+    # Replace spaces with underscores or hyphens
+    s = s.replace(' ', '_')
+    # Remove leading/trailing periods or spaces
+    s = s.strip(' ._')
+    return s
+
+
+def contact_tracking_log(name, user, is_private, modified, person):
+    dirpath = '/tmp/contact-tracking'
+    try:
+        if not os.path.isdir(dirpath):
+            os.makedirs(dirpath, exist_ok=True)
+    except Exception:
+        # If we cannot create the directory, don't raise an exception
+        return
+
+    logpath = os.path.join(dirpath, make_safe_filename(name) + '.log')
+    with open(logpath, 'a') as f:
+        f.write(f">> {datetime.datetime.now()} <<\n")
+        meta_str = f" in {user}"
+        if is_private:
+            meta_str += " [private]"
+        if modified:
+            meta_str += " [modified]"
+        f.write(ContactDebugDump(person, meta_str) + '\n')
+
 ##
 ## MergeContacts --
 ##     Combine contacts from all users.
@@ -744,6 +779,9 @@ def MergeContacts(users, contacts, pvtGroups):
                     if grp['contactGroupMembership']['contactGroupResourceName'] in pvtGroups:
                         is_private = True
                         break
+
+            if debug > 1:
+                contact_tracking_log(name, users[i], is_private, modified, person)
 
             for j in range(len(users)):
                 if j != i:
@@ -806,6 +844,9 @@ def AddContactToUser(contacts_tgt, contacts_src, src_person):
         if dk in entry:
             del entry[dk]
 
+    if debug:
+        print(textwrap.indent(ContactDebugDump(entry), '  '))
+
     # Add the new contact
     return contacts_tgt.ContactAdd(entry)
 
@@ -832,6 +873,9 @@ def UpdateContactInUser(contacts_tgt, contacts_src, src_person, prev_person):
     # Use the original resource name
     entry['resourceName'] = prev_person['resourceName']
     entry['etag'] = prev_person['etag']
+
+    if debug:
+        print(textwrap.indent(ContactDebugDump(entry), '  '))
 
     return contacts_tgt.ContactUpdate(entry)
 
@@ -929,8 +973,8 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='Prevents writes to the Google servers.')
 
-    parser.add_argument('--debug', action='store_true',
-                        help='Print debugging messages.')
+    parser.add_argument('--debug', nargs='?', const=1, default=0, type=int,
+                        help='Set debug level (0=off). If specified without a value, sets to 1.')
 
     flags = parser.parse_args()
 
@@ -938,6 +982,9 @@ def main():
     pvt_grp_names = flags.private
     enableUpdates = not flags.dry_run
     debug = flags.debug
+
+    if debug:
+        print(f"invoked: {datetime.datetime.now()}")
 
     ##
     ## If adding a new account use the name of contact to set uid
