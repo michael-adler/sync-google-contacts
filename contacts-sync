@@ -870,6 +870,15 @@ def UpdateContactInUser(contacts_tgt, contacts_src, src_person, prev_person):
         if dk in entry:
             del entry[dk]
 
+    # Drop formatted addresses if it looks like there are individual
+    # address fields set. Let Google recreate it in the target.
+    drop_addr_keys = ['formattedValue', 'formattedType']
+    for e in entry.get('addresses', []):
+        if 'streetAddress' in e or 'city' in e:
+            for dk in drop_addr_keys:
+                if dk in e:
+                    del e[dk]
+
     # Use the original resource name
     entry['resourceName'] = prev_person['resourceName']
     entry['etag'] = prev_person['etag']
