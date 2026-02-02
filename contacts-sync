@@ -992,7 +992,7 @@ def main():
     enableUpdates = not flags.dry_run
     debug = flags.debug
 
-    if debug:
+    if debug > 1:
         print(f"invoked: {datetime.datetime.now()}")
 
     ##
