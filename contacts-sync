@@ -38,14 +38,22 @@ import time
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 
-from oauth2client.client import flow_from_clientsecrets
-from oauth2client.file import Storage
 from oauth2client import tools
-from oauth2client.tools import run_flow
 
 SECRET_JSON = '.google/authdata/client_secret.json'
 SCOPES = ['https://www.googleapis.com/auth/contacts']
+OAUTH_LOCAL_HOST = '127.0.0.1'
+OAUTH_LOCAL_PORT_ENV = 'GOOGLE_OAUTH_LOCAL_PORT'
+
+
+def _oauth_local_port():
+    port_str = os.environ.get(OAUTH_LOCAL_PORT_ENV, '8765')
+    try:
+        return int(port_str)
+    except ValueError:
+        raise RuntimeError('{0} must be an integer port number'.format(OAUTH_LOCAL_PORT_ENV))
 
 MAX_RESULTS = 10000
 SYNC_ID_TAG = 'csync-uid'
@@ -102,12 +110,16 @@ class UserContacts(object):
                     token.write(creds.to_json())
             else:
                 print('Need new token for ' + user + ':')
-                flow = flow_from_clientsecrets(os.path.join(user_dir, SECRET_JSON),
-                                               scope=SCOPES,
-                                               redirect_uri = 'urn:ietf:wg:oauth:2.0:oob')
-                auth_flags = tools.argparser.parse_args(args=['--noauth_local_webserver',
-                                                        '--logging_level=DEBUG'])
-                creds = run_flow(flow, Storage(token_fn), auth_flags)
+                print('If browser runs on a different host, tunnel callback port first:')
+                print('  ssh -L {0}:127.0.0.1:{0} <this-host>'.format(_oauth_local_port()))
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    os.path.join(user_dir, SECRET_JSON), SCOPES)
+                creds = flow.run_local_server(host=OAUTH_LOCAL_HOST,
+                                              port=_oauth_local_port(),
+                                              open_browser=False)
+                # Save the credentials for the next run
+                with open(token_fn, 'w') as token:
+                    token.write(creds.to_json())
 
         self.__service = build('people', 'v1', credentials=creds)
         self.people = self.__service.people()

@@ -17,6 +17,19 @@ duplication everywhere.  See the synchronize all contacts section below.
 Accounts and passwords are stored in ~/.google/config.  See the sample/config
 file here for an example.
 
+OAuth login notes:
+
+ - The scripts use installed-app OAuth with loopback redirect and no longer use
+   the blocked OOB (`urn:ietf:wg:oauth:2.0:oob`) redirect.
+ - A local callback listener is used for sign-in.
+ - Use a normal Desktop App OAuth client JSON in
+   `~/.google/authdata/client_secret.json`.
+ - Callback host is `127.0.0.1` and default callback port is `8765`.
+ - Override port with `GOOGLE_OAUTH_LOCAL_PORT`.
+ - If the browser is running on a different host than where the script runs,
+   forward the callback port to the script host, for example:
+  `ssh -L 8765:127.0.0.1:8765 <this-host>`
+
 The algorithm:
 
  - Synchronize all group names:
