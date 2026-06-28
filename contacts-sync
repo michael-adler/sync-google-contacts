@@ -40,8 +40,6 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from oauth2client import tools
-
 SECRET_JSON = '.google/authdata/client_secret.json'
 SCOPES = ['https://www.googleapis.com/auth/contacts']
 OAUTH_LOCAL_HOST = '127.0.0.1'
@@ -75,7 +73,7 @@ debug = 0
 class UserContacts(object):
     """UserContacts object loads Google contacts from an account"""
 
-    def __init__(self, user, flags = None, createuid = True):
+    def __init__(self, user, createuid = True):
         """Constructor for the UserContacts object.
 
         Takes a user name that will be used to find an OAuth2 stored credential.
@@ -977,8 +975,7 @@ def main():
     pvt_grp_names = set()
 
     # Parse Google tools flags
-    parser = argparse.ArgumentParser(description='Synchronize Google contacts between accounts',
-                                     parents=[tools.argparser])
+    parser = argparse.ArgumentParser(description='Synchronize Google contacts between accounts')
 
     parser.add_argument('--user', type=str, required=True, action='append',
                         help='Name of a Google account.')
@@ -1014,7 +1011,6 @@ def main():
         contacts = []
         for i in range(len(users)):
             contacts.append(UserContacts(users[i],
-                                         flags = flags,
                                          createuid = False))
         AddUids(contacts)
 
@@ -1023,7 +1019,7 @@ def main():
     ##
     contacts = []
     for i in range(len(users)):
-        contacts.append(UserContacts(users[i], flags = flags))
+        contacts.append(UserContacts(users[i]))
 
     ## Merge groups across all users
     MergeGroups(users, contacts)
